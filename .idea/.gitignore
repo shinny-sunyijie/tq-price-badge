@@ -1,0 +1,8 @@
+# 默认忽略的文件
+/shelf/
+/workspace.xml
+/.name
+/modules.xml
+/misc.xml
+/money.iml
+/inspectionProfiles/profiles_settings.xml
