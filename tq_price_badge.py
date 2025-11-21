@@ -23,7 +23,9 @@ if not TQ_USER or not TQ_PASS:
 默认配置 = {
     "badge_font_size": 56,          # 价格字号
     "badge_font_color": "#A6E22E",  # 柔和荧光绿，避免纯 #00FF00
-    "badge_subtitle": ""            # 上方小字：空=跟随合约代码
+    "badge_subtitle": "",           # 上方小字：空=跟随合约代码
+    "badge_pos": None,              # 悬浮牌位置（持久化存储）
+    "settings_pos": None            # 设置窗口位置（持久化存储）
 }
 配置 = 默认配置.copy()
 显示大号价格默认 = True
@@ -72,6 +74,29 @@ def 格式化价格(p):
     return s
 
 
+def 计算安全坐标(目标点: QtCore.QPoint, 窗口大小: QtCore.QSize) -> QtCore.QPoint:
+    """
+    在多屏、高分辨率环境下，确保窗口位置落在可见区域。
+
+    :param 目标点: 期望的左上角坐标（逻辑坐标系）。
+    :param 窗口大小: 窗口大小，通常使用 self.size()。
+    """
+
+    屏幕 = QtGui.QGuiApplication.screenAt(目标点)
+    if 屏幕 is None:
+        屏幕 = QtGui.QGuiApplication.primaryScreen()
+    if 屏幕 is None:
+        # 理论不会发生，但仍返回原位置以避免崩溃
+        return 目标点
+
+    可用 = 屏幕.availableGeometry()
+    最大偏移_x = max(0, 可用.width() - 窗口大小.width())
+    最大偏移_y = max(0, 可用.height() - 窗口大小.height())
+    x = min(max(目标点.x(), 可用.left()), 可用.left() + 最大偏移_x)
+    y = min(max(目标点.y(), 可用.top()), 可用.top() + 最大偏移_y)
+    return QtCore.QPoint(x, y)
+
+
 class 行情线程(QtCore.QThread):
     价格信号 = QtCore.Signal(object)  # 文本
     错误信号 = QtCore.Signal(str)
@@ -112,6 +137,8 @@ class 行情线程(QtCore.QThread):
 
 
 class 悬浮牌窗口(QtWidgets.QWidget):
+    设置请求 = QtCore.Signal()
+
     def __init__(self, 父=None):
         super().__init__(父)
         self.当前价格文本 = "…"
@@ -122,7 +149,7 @@ class 悬浮牌窗口(QtWidgets.QWidget):
 
         self._初始化窗口标志()
         self._初始化界面()
-        self._放到底部右侧()
+        self._恢复或放到底部右侧()
 
     def _初始化窗口标志(self):
         标志 = (
@@ -154,22 +181,21 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         self.小字标签.setFont(小字字体)
         头部布局.addWidget(self.小字标签, 0, QtCore.Qt.AlignLeft)
 
+        # 锁定/解锁按钮
         self.锁按钮 = QtWidgets.QToolButton(self)
         self.锁按钮.setText("🔒" if self.已锁定 else "🔓")
         self.锁按钮.setCursor(QtCore.Qt.PointingHandCursor)
-        self.锁按钮.setStyleSheet("""
-            QToolButton {
-                color: #EEEEEE;
-                background-color: rgba(34,34,34,220);
-                border: 0px;
-                padding: 0 4px;
-            }
-            QToolButton:hover {
-                background-color: rgba(51,51,51,220);
-            }
-        """)
+        self.锁按钮.setStyleSheet(self._按钮样式())
         self.锁按钮.clicked.connect(self.切换锁定)
         头部布局.addWidget(self.锁按钮, 0, QtCore.Qt.AlignRight)
+
+        # 编辑按钮：打开设置
+        self.编辑按钮 = QtWidgets.QToolButton(self)
+        self.编辑按钮.setText("✏️")
+        self.编辑按钮.setCursor(QtCore.Qt.PointingHandCursor)
+        self.编辑按钮.setStyleSheet(self._按钮样式())
+        self.编辑按钮.clicked.connect(self.设置请求)
+        头部布局.addWidget(self.编辑按钮, 0, QtCore.Qt.AlignRight)
 
         主布局.addWidget(头部部件)
 
@@ -186,15 +212,48 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         主布局.addWidget(self.价格标签)
         主布局.setContentsMargins(6, 0, 6, 4)
 
+    def _按钮样式(self) -> str:
+        """统一定义头部按钮的样式，避免重复 CSS。"""
+
+        return """
+            QToolButton {
+                color: #EEEEEE;
+                background-color: rgba(34,34,34,220);
+                border: 0px;
+                padding: 0 4px;
+            }
+            QToolButton:hover {
+                background-color: rgba(51,51,51,220);
+            }
+        """
+
     def _放到底部右侧(self):
         self.adjustSize()
         屏幕 = QtGui.QGuiApplication.primaryScreen()
+        if 屏幕 is None:
+            # 理论上不会为空，但保底避免在极端环境崩溃
+            self.move(12, 40)
+            self._保存位置()
+            return
         可用区域 = 屏幕.availableGeometry()
         w = self.width()
         h = self.height()
         x = 可用区域.right() - w - 12
         y = 可用区域.bottom() - h - 40
         self.move(x, y)
+        self._保存位置()
+
+    def _恢复或放到底部右侧(self):
+        """从配置恢复悬浮牌位置；没有记录则落到底部右侧。"""
+
+        self.adjustSize()
+        记录 = 配置.get("badge_pos") or {}
+        if "x" in 记录 and "y" in 记录:
+            目标 = QtCore.QPoint(int(记录["x"]), int(记录["y"]))
+            安全点 = 计算安全坐标(目标, self.size())
+            self.move(安全点)
+        else:
+            self._放到底部右侧()
 
     # ===== 公共接口 =====
     def 更新价格文本(self, 文本: str):
@@ -230,10 +289,12 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         if self._拖动中 and not self.已锁定:
             当前 = 事件.globalPosition().toPoint()
             位移 = 当前 - self._拖动起点
-            self.move(self._窗口起点 + 位移)
+            self._移动到安全位置(self._窗口起点 + 位移)
         super().mouseMoveEvent(事件)
 
     def mouseReleaseEvent(self, 事件):
+        if self._拖动中 and not self.已锁定:
+            self._保存位置()
         self._拖动中 = False
         super().mouseReleaseEvent(事件)
 
@@ -241,6 +302,18 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         if 事件.button() == QtCore.Qt.LeftButton:
             self.hide()
         super().mouseDoubleClickEvent(事件)
+
+    def _移动到安全位置(self, 目标点: QtCore.QPoint):
+        """拖动时限制在可见范围内，避免跑到屏幕外。"""
+
+        安全点 = 计算安全坐标(目标点, self.size())
+        self.move(安全点)
+
+    def _保存位置(self):
+        """记录悬浮牌位置以便下次启动恢复。"""
+
+        配置["badge_pos"] = {"x": int(self.x()), "y": int(self.y())}
+        保存配置()
 
 
 class 设置对话框(QtWidgets.QDialog):
@@ -250,6 +323,7 @@ class 设置对话框(QtWidgets.QDialog):
         self.setModal(True)
         self.setFixedSize(360, 240)
         self._初始化界面()
+        self._恢复位置()
 
     def _初始化界面(self):
         布局 = QtWidgets.QGridLayout(self)
@@ -301,6 +375,8 @@ class 设置对话框(QtWidgets.QDialog):
         # 按钮
         按钮框 = QtWidgets.QHBoxLayout()
         self.确定按钮 = QtWidgets.QPushButton("保存", self)
+        self.确定按钮.setDefault(True)  # Enter 键直接触发保存
+        self.确定按钮.setAutoDefault(True)
         self.取消按钮 = QtWidgets.QPushButton("取消", self)
         self.确定按钮.clicked.connect(self.accept)
         self.取消按钮.clicked.connect(self.reject)
@@ -348,12 +424,58 @@ class 设置对话框(QtWidgets.QDialog):
         保存配置()
         super().accept()
 
+    def keyPressEvent(self, 事件: QtGui.QKeyEvent):
+        """Enter 映射为保存关闭，其他按键保持默认行为。"""
+
+        if 事件.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            self.accept()
+            return
+        super().keyPressEvent(事件)
+
+    def _恢复位置(self):
+        """恢复设置窗口位置，若无记录则以父窗口为中心。"""
+
+        记录 = 配置.get("settings_pos") or {}
+        if "x" in 记录 and "y" in 记录:
+            目标 = QtCore.QPoint(int(记录["x"]), int(记录["y"]))
+        else:
+            目标 = self._默认位置()
+
+        安全点 = 计算安全坐标(目标, self.size())
+        self.move(安全点)
+
+    def _默认位置(self) -> QtCore.QPoint:
+        """优先以父级窗口为中心，否则落在主屏中央。"""
+
+        父级 = self.parentWidget()
+        if 父级:
+            父矩形 = 父级.frameGeometry()
+            return 父矩形.center() - QtCore.QPoint(self.width() // 2, self.height() // 2)
+
+        屏幕 = QtGui.QGuiApplication.primaryScreen()
+        if 屏幕:
+            可用 = 屏幕.availableGeometry()
+            return 可用.center() - QtCore.QPoint(self.width() // 2, self.height() // 2)
+        return QtCore.QPoint(100, 100)
+
+    def _保存位置(self):
+        """记录设置窗口位置以适配多屏、多分辨率。"""
+
+        配置["settings_pos"] = {"x": int(self.x()), "y": int(self.y())}
+        保存配置()
+
+    def closeEvent(self, 事件: QtGui.QCloseEvent):
+        self._保存位置()
+        super().closeEvent(事件)
+
 
 class 主控制(QtCore.QObject):
     def __init__(self, 应用: QtWidgets.QApplication):
         super().__init__()
         self.应用 = 应用
         self.悬浮牌 = 悬浮牌窗口()
+        # 悬浮牌上的“编辑”按钮打开同一份设置对话框
+        self.悬浮牌.设置请求.connect(self.打开设置)
         if 显示大号价格默认:
             self.悬浮牌.show()
 
