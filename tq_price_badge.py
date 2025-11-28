@@ -23,7 +23,11 @@ if not TQ_USER or not TQ_PASS:
 默认配置 = {
     "badge_font_size": 56,          # 价格字号
     "badge_font_color": "#A6E22E",  # 柔和荧光绿，避免纯 #00FF00
+    "subtitle_font_size": 14,       # 备注字号
+    "subtitle_font_color": "#9AA0A6",  # 备注颜色
     "badge_subtitle": "",           # 上方小字：空=跟随合约代码
+    "badge_header_pos": None,       # 头部组件位置
+    "badge_price_pos": None,        # 价格组件位置
     "badge_pos": None,              # 悬浮牌位置（持久化存储）
     "settings_pos": None            # 设置窗口位置（持久化存储）
 }
@@ -72,6 +76,18 @@ def 格式化价格(p):
         except Exception:
             return s[:6]
     return s
+
+
+def 读取组件位置配置():
+    """读取备注区和价格区的相对坐标，落在默认值上。"""
+
+    头部默认 = QtCore.QPoint(6, 2)
+    价格默认 = QtCore.QPoint(6, 28)
+    头部记录 = 配置.get("badge_header_pos") or {}
+    价格记录 = 配置.get("badge_price_pos") or {}
+    头部点 = QtCore.QPoint(int(头部记录.get("x", 头部默认.x())), int(头部记录.get("y", 头部默认.y())))
+    价格点 = QtCore.QPoint(int(价格记录.get("x", 价格默认.x())), int(价格记录.get("y", 价格默认.y())))
+    return 头部点, 价格点
 
 
 def 计算安全坐标(目标点: QtCore.QPoint, 窗口大小: QtCore.QSize) -> QtCore.QPoint:
@@ -163,41 +179,37 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
 
     def _初始化界面(self):
-        主布局 = QtWidgets.QVBoxLayout(self)
-        主布局.setContentsMargins(0, 0, 0, 0)
-        主布局.setSpacing(0)
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
 
-        # 头部：小字 + 锁按钮
-        头部部件 = QtWidgets.QWidget(self)
-        头部部件.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        头部布局 = QtWidgets.QHBoxLayout(头部部件)
-        头部布局.setContentsMargins(6, 2, 6, 0)
+        # 头部：小字 + 锁按钮 + 编辑按钮
+        self.头部部件 = QtWidgets.QWidget(self)
+        self.头部部件.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        头部布局 = QtWidgets.QHBoxLayout(self.头部部件)
+        头部布局.setContentsMargins(0, 0, 0, 0)
         头部布局.setSpacing(4)
 
-        self.小字标签 = QtWidgets.QLabel(生效小字(), self)
-        self.小字标签.setStyleSheet("color: #9AA0A6; background: transparent;")
-        小字字体 = QtGui.QFont(默认字体族, 14)
+        self.小字标签 = QtWidgets.QLabel(生效小字(), self.头部部件)
+        self.小字标签.setStyleSheet(
+            f"color: {配置['subtitle_font_color']}; background: transparent;"
+        )
+        小字字体 = QtGui.QFont(默认字体族, 配置["subtitle_font_size"])
         小字字体.setBold(True)
         self.小字标签.setFont(小字字体)
         头部布局.addWidget(self.小字标签, 0, QtCore.Qt.AlignLeft)
 
-        # 锁定/解锁按钮
-        self.锁按钮 = QtWidgets.QToolButton(self)
+        self.锁按钮 = QtWidgets.QToolButton(self.头部部件)
         self.锁按钮.setText("🔒" if self.已锁定 else "🔓")
         self.锁按钮.setCursor(QtCore.Qt.PointingHandCursor)
         self.锁按钮.setStyleSheet(self._按钮样式())
         self.锁按钮.clicked.connect(self.切换锁定)
         头部布局.addWidget(self.锁按钮, 0, QtCore.Qt.AlignRight)
 
-        # 编辑按钮：打开设置
-        self.编辑按钮 = QtWidgets.QToolButton(self)
+        self.编辑按钮 = QtWidgets.QToolButton(self.头部部件)
         self.编辑按钮.setText("✏️")
         self.编辑按钮.setCursor(QtCore.Qt.PointingHandCursor)
         self.编辑按钮.setStyleSheet(self._按钮样式())
         self.编辑按钮.clicked.connect(self.设置请求)
         头部布局.addWidget(self.编辑按钮, 0, QtCore.Qt.AlignRight)
-
-        主布局.addWidget(头部部件)
 
         # 大号价格
         self.价格标签 = QtWidgets.QLabel(self)
@@ -209,8 +221,8 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         价格字体 = QtGui.QFont(默认字体族, 配置["badge_font_size"])
         价格字体.setBold(True)
         self.价格标签.setFont(价格字体)
-        主布局.addWidget(self.价格标签)
-        主布局.setContentsMargins(6, 0, 6, 4)
+
+        self._应用组件位置()
 
     def _按钮样式(self) -> str:
         """统一定义头部按钮的样式，避免重复 CSS。"""
@@ -226,6 +238,37 @@ class 悬浮牌窗口(QtWidgets.QWidget):
                 background-color: rgba(51,51,51,220);
             }
         """
+
+    def _读取组件位置(self):
+        return 读取组件位置配置()
+
+    def _保存组件位置(self, 头部点: QtCore.QPoint, 价格点: QtCore.QPoint):
+        配置["badge_header_pos"] = {"x": int(头部点.x()), "y": int(头部点.y())}
+        配置["badge_price_pos"] = {"x": int(价格点.x()), "y": int(价格点.y())}
+        保存配置()
+
+    def _应用组件位置(self, 头部点: QtCore.QPoint | None = None, 价格点: QtCore.QPoint | None = None):
+        头部目标, 价格目标 = self._读取组件位置()
+        if 头部点 is not None:
+            头部目标 = 头部点
+        if 价格点 is not None:
+            价格目标 = 价格点
+
+        self.头部部件.adjustSize()
+        self.价格标签.adjustSize()
+
+        self.头部部件.move(头部目标)
+        self.价格标签.move(价格目标)
+
+        宽度 = max(
+            self.头部部件.x() + self.头部部件.width(),
+            self.价格标签.x() + self.价格标签.width()
+        ) + 6
+        高度 = max(
+            self.头部部件.y() + self.头部部件.height(),
+            self.价格标签.y() + self.价格标签.height()
+        ) + 6
+        self.setFixedSize(宽度, 高度)
 
     def _放到底部右侧(self):
         self.adjustSize()
@@ -259,12 +302,13 @@ class 悬浮牌窗口(QtWidgets.QWidget):
     def 更新价格文本(self, 文本: str):
         self.当前价格文本 = 文本
         self.价格标签.setText(文本)
+        self._应用组件位置()
 
     def 切换锁定(self):
         self.已锁定 = not self.已锁定
         self.锁按钮.setText("🔒" if self.已锁定 else "🔓")
 
-    def 应用样式(self, 字号=None, 颜色=None, 小字=None):
+    def 应用样式(self, 字号=None, 颜色=None, 小字=None, 小字字号=None, 小字颜色=None):
         if 字号 is not None:
             字体 = self.价格标签.font()
             字体.setPointSize(字号)
@@ -273,9 +317,17 @@ class 悬浮牌窗口(QtWidgets.QWidget):
             self.价格标签.setStyleSheet(
                 f"color: {颜色}; background: transparent;"
             )
+        if 小字字号 is not None:
+            字体 = self.小字标签.font()
+            字体.setPointSize(小字字号)
+            self.小字标签.setFont(字体)
+        if 小字颜色 is not None:
+            self.小字标签.setStyleSheet(
+                f"color: {小字颜色}; background: transparent;"
+            )
         if 小字 is not None:
             self.小字标签.setText(小字)
-        self.adjustSize()
+        self._应用组件位置()
 
     # ===== 事件：拖动、双击 =====
     def mousePressEvent(self, 事件):
@@ -315,13 +367,131 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         配置["badge_pos"] = {"x": int(self.x()), "y": int(self.y())}
         保存配置()
 
+    def 更新组件位置(self, 头部点: QtCore.QPoint, 价格点: QtCore.QPoint):
+        """从设置预览中同步内部组件的位置。"""
+
+        self._保存组件位置(头部点, 价格点)
+        self._应用组件位置(头部点, 价格点)
+
+
+class 悬浮牌预览(QtWidgets.QFrame):
+    位置变更 = QtCore.Signal(QtCore.QPoint, QtCore.QPoint)
+
+    def __init__(self, 父=None):
+        super().__init__(父)
+        self.setFixedSize(320, 220)
+        self.setStyleSheet("background-color:#202020; border:1px solid #444;")
+        self.setMouseTracking(True)
+
+        self._拖拽目标 = None
+        self._拖拽偏移 = QtCore.QPoint()
+
+        self.头部部件 = QtWidgets.QWidget(self)
+        头部布局 = QtWidgets.QHBoxLayout(self.头部部件)
+        头部布局.setContentsMargins(0, 0, 0, 0)
+        头部布局.setSpacing(4)
+
+        self.小字标签 = QtWidgets.QLabel(生效小字(), self.头部部件)
+        备注字体 = QtGui.QFont(默认字体族, 配置.get("subtitle_font_size", 14))
+        备注字体.setBold(True)
+        self.小字标签.setFont(备注字体)
+        self.小字标签.setStyleSheet(
+            f"color:{配置.get('subtitle_font_color', '#9AA0A6')}; background: transparent;"
+        )
+        头部布局.addWidget(self.小字标签, 0, QtCore.Qt.AlignLeft)
+
+        self.锁按钮 = QtWidgets.QToolButton(self.头部部件)
+        self.锁按钮.setText("🔒")
+        self.锁按钮.setStyleSheet("color:#ccc; background:transparent; border:0;")
+        头部布局.addWidget(self.锁按钮)
+
+        self.编辑按钮 = QtWidgets.QToolButton(self.头部部件)
+        self.编辑按钮.setText("✏️")
+        self.编辑按钮.setStyleSheet("color:#ccc; background:transparent; border:0;")
+        头部布局.addWidget(self.编辑按钮)
+
+        self.价格标签 = QtWidgets.QLabel("12345.6", self)
+        价格字体 = QtGui.QFont(默认字体族, 配置.get("badge_font_size", 56))
+        价格字体.setBold(True)
+        self.价格标签.setFont(价格字体)
+        self.价格标签.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.价格标签.setStyleSheet(
+            f"color:{配置.get('badge_font_color', '#A6E22E')}; background: transparent;"
+        )
+
+        头部点, 价格点 = 读取组件位置配置()
+        self._应用位置(头部点, 价格点)
+
+    def _边界内(self, 位置: QtCore.QPoint, 部件: QtWidgets.QWidget) -> QtCore.QPoint:
+        x = max(0, min(位置.x(), self.width() - 部件.width()))
+        y = max(0, min(位置.y(), self.height() - 部件.height()))
+        return QtCore.QPoint(x, y)
+
+    def _应用位置(self, 头部点: QtCore.QPoint, 价格点: QtCore.QPoint):
+        self.头部部件.adjustSize()
+        self.价格标签.adjustSize()
+        self.头部部件.move(self._边界内(头部点, self.头部部件))
+        self.价格标签.move(self._边界内(价格点, self.价格标签))
+
+    def 更新文本(self, 小字: str, 价格文本: str):
+        self.小字标签.setText(小字)
+        self.价格标签.setText(价格文本)
+        self._应用位置(self.头部部件.pos(), self.价格标签.pos())
+
+    def 更新样式(self, 价格字号: int, 价格颜色: str, 备注字号: int, 备注颜色: str):
+        字体 = self.价格标签.font()
+        字体.setPointSize(价格字号)
+        self.价格标签.setFont(字体)
+        self.价格标签.setStyleSheet(f"color:{价格颜色}; background: transparent;")
+
+        备注字体 = self.小字标签.font()
+        备注字体.setPointSize(备注字号)
+        self.小字标签.setFont(备注字体)
+        self.小字标签.setStyleSheet(f"color:{备注颜色}; background: transparent;")
+        self._应用位置(self.头部部件.pos(), self.价格标签.pos())
+
+    def 获取组件位置(self):
+        return self.头部部件.pos(), self.价格标签.pos()
+
+    def 应用外部位置(self, 头部点: QtCore.QPoint, 价格点: QtCore.QPoint):
+        self._应用位置(头部点, 价格点)
+
+    def mousePressEvent(self, 事件: QtGui.QMouseEvent):
+        点 = 事件.position().toPoint()
+        if QtCore.QRect(self.头部部件.pos(), self.头部部件.size()).contains(点):
+            self._拖拽目标 = "header"
+            self._拖拽偏移 = 点 - self.头部部件.pos()
+        elif QtCore.QRect(self.价格标签.pos(), self.价格标签.size()).contains(点):
+            self._拖拽目标 = "price"
+            self._拖拽偏移 = 点 - self.价格标签.pos()
+        super().mousePressEvent(事件)
+
+    def mouseMoveEvent(self, 事件: QtGui.QMouseEvent):
+        if self._拖拽目标:
+            目标点 = 事件.position().toPoint() - self._拖拽偏移
+            if self._拖拽目标 == "header":
+                安全点 = self._边界内(目标点, self.头部部件)
+                self.头部部件.move(安全点)
+            elif self._拖拽目标 == "price":
+                安全点 = self._边界内(目标点, self.价格标签)
+                self.价格标签.move(安全点)
+            self.位置变更.emit(self.头部部件.pos(), self.价格标签.pos())
+        super().mouseMoveEvent(事件)
+
+    def mouseReleaseEvent(self, 事件: QtGui.QMouseEvent):
+        if self._拖拽目标:
+            self.位置变更.emit(self.头部部件.pos(), self.价格标签.pos())
+        self._拖拽目标 = None
+        super().mouseReleaseEvent(事件)
+
 
 class 设置对话框(QtWidgets.QDialog):
     def __init__(self, 父=None):
         super().__init__(父)
         self.setWindowTitle("设置 - 悬浮牌样式")
         self.setModal(True)
-        self.setFixedSize(360, 240)
+        self.setFixedSize(520, 520)
+        self._预览头部位置, self._预览价格位置 = 读取组件位置配置()
         self._初始化界面()
         self._恢复位置()
 
@@ -329,8 +499,8 @@ class 设置对话框(QtWidgets.QDialog):
         布局 = QtWidgets.QGridLayout(self)
         行 = 0
 
-        # 字号
-        布局.addWidget(QtWidgets.QLabel("字体大小："), 行, 0, QtCore.Qt.AlignRight)
+        # 价格字号
+        布局.addWidget(QtWidgets.QLabel("行情字体大小："), 行, 0, QtCore.Qt.AlignRight)
         self.字号变量 = QtWidgets.QSpinBox(self)
         self.字号变量.setRange(20, 160)
         self.字号变量.setSingleStep(2)
@@ -339,11 +509,28 @@ class 设置对话框(QtWidgets.QDialog):
         布局.addWidget(self.字号变量, 行, 1, QtCore.Qt.AlignLeft)
         行 += 1
 
-        # 颜色
-        布局.addWidget(QtWidgets.QLabel("字体颜色："), 行, 0, QtCore.Qt.AlignRight)
+        # 价格颜色
+        布局.addWidget(QtWidgets.QLabel("行情字体颜色："), 行, 0, QtCore.Qt.AlignRight)
         self.颜色按钮 = QtWidgets.QPushButton(配置["badge_font_color"], self)
         self.颜色按钮.clicked.connect(self._选择颜色)
         布局.addWidget(self.颜色按钮, 行, 1, QtCore.Qt.AlignLeft)
+        行 += 1
+
+        # 备注字号
+        布局.addWidget(QtWidgets.QLabel("备注字体大小："), 行, 0, QtCore.Qt.AlignRight)
+        self.备注字号变量 = QtWidgets.QSpinBox(self)
+        self.备注字号变量.setRange(10, 80)
+        self.备注字号变量.setSingleStep(1)
+        self.备注字号变量.setValue(配置["subtitle_font_size"])
+        self.备注字号变量.valueChanged.connect(self._预览)
+        布局.addWidget(self.备注字号变量, 行, 1, QtCore.Qt.AlignLeft)
+        行 += 1
+
+        # 备注颜色
+        布局.addWidget(QtWidgets.QLabel("备注字体颜色："), 行, 0, QtCore.Qt.AlignRight)
+        self.备注颜色按钮 = QtWidgets.QPushButton(配置["subtitle_font_color"], self)
+        self.备注颜色按钮.clicked.connect(lambda: self._选择颜色(True))
+        布局.addWidget(self.备注颜色按钮, 行, 1, QtCore.Qt.AlignLeft)
         行 += 1
 
         # 小字
@@ -352,6 +539,7 @@ class 设置对话框(QtWidgets.QDialog):
             配置.get("badge_subtitle") or 合约代码,
             self
         )
+        self.小字输入.textChanged.connect(self._预览)
         布局.addWidget(self.小字输入, 行, 1, QtCore.Qt.AlignLeft)
         提示标签 = QtWidgets.QLabel("（留空=跟随合约代码）", self)
         提示标签.setStyleSheet("color:#888888;")
@@ -360,16 +548,10 @@ class 设置对话框(QtWidgets.QDialog):
 
         # 预览
         布局.addWidget(QtWidgets.QLabel("预览："), 行, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
-        self.预览标签 = QtWidgets.QLabel("12345.6", self)
-        self.预览标签.setStyleSheet(
-            f"background-color:#202020; color:{配置['badge_font_color']};"
-        )
-        预览字体 = QtGui.QFont(默认字体族, 配置["badge_font_size"])
-        预览字体.setBold(True)
-        self.预览标签.setFont(预览字体)
-        self.预览标签.setMinimumWidth(160)
-        self.预览标签.setAlignment(QtCore.Qt.AlignCenter)
-        布局.addWidget(self.预览标签, 行, 1, 1, 2)
+        self.预览组件 = 悬浮牌预览(self)
+        self.预览组件.位置变更.connect(self._更新预览位置提示)
+        self.预览组件.应用外部位置(self._预览头部位置, self._预览价格位置)
+        布局.addWidget(self.预览组件, 行, 1, 1, 2)
         行 += 1
 
         # 按钮
@@ -387,40 +569,55 @@ class 设置对话框(QtWidgets.QDialog):
 
         self._预览()
 
-    def _选择颜色(self):
-        初始 = QtGui.QColor(self.颜色按钮.text())
+    def _选择颜色(self, 用于备注=False):
+        按钮 = self.备注颜色按钮 if 用于备注 else self.颜色按钮
+        初始 = QtGui.QColor(按钮.text())
         颜色 = QtWidgets.QColorDialog.getColor(
             初始, self, "选择字体颜色"
         )
         if 颜色.isValid():
             # 轻微提醒避免纯 #00FF00
-            if 颜色.name().lower() == "#00ff00":
+            if (not 用于备注) and 颜色.name().lower() == "#00ff00":
                 QtWidgets.QMessageBox.information(
                     self, "提示",
-                    "纯 #00FF00 绿在透明背景上会比较刺眼，"
+                    "纯 #00FF00 绿在透明背景上会比较刺眼，",
                     "建议用稍微偏灰一点的绿。例如 #A6E22E。"
                 )
-            self.颜色按钮.setText(颜色.name())
+            按钮.setText(颜色.name())
             self._预览()
 
     def _预览(self):
         字号 = self.字号变量.value()
         颜色 = self.颜色按钮.text()
-        字体 = QtGui.QFont(默认字体族, 字号)
-        字体.setBold(True)
-        self.预览标签.setFont(字体)
-        self.预览标签.setStyleSheet(
-            f"background-color:#202020; color:{颜色};"
-        )
+        备注字号 = self.备注字号变量.value()
+        备注颜色 = self.备注颜色按钮.text()
+        小字原始 = (self.小字输入.text() or "").strip()
+        小字文本 = 小字原始 if 小字原始 else 合约代码
+        行情文本 = getattr(self.parent(), "当前价格文本", "12345.6")
+
+        self.预览组件.更新样式(字号, 颜色, 备注字号, 备注颜色)
+        self.预览组件.更新文本(小字文本, 行情文本)
+        self.预览组件.应用外部位置(self._预览头部位置, self._预览价格位置)
+
+    def _更新预览位置提示(self, 头部点: QtCore.QPoint, 价格点: QtCore.QPoint):
+        self._预览头部位置 = 头部点
+        self._预览价格位置 = 价格点
 
     def accept(self):
         # 更新全局配置
         字号 = self.字号变量.value()
         颜色 = self.颜色按钮.text()
+        备注字号 = self.备注字号变量.value()
+        备注颜色 = self.备注颜色按钮.text()
         小字原始 = (self.小字输入.text() or "").strip()
+        头部点, 价格点 = self._预览头部位置, self._预览价格位置
         配置["badge_font_size"] = 字号
         配置["badge_font_color"] = 颜色
+        配置["subtitle_font_size"] = 备注字号
+        配置["subtitle_font_color"] = 备注颜色
         配置["badge_subtitle"] = "" if (小字原始 == "" or 小字原始 == 合约代码) else 小字原始
+        配置["badge_header_pos"] = {"x": int(头部点.x()), "y": int(头部点.y())}
+        配置["badge_price_pos"] = {"x": int(价格点.x()), "y": int(价格点.y())}
         保存配置()
         super().accept()
 
@@ -533,8 +730,12 @@ class 主控制(QtCore.QObject):
             self.悬浮牌.应用样式(
                 字号=配置["badge_font_size"],
                 颜色=配置["badge_font_color"],
-                小字=生效小字()
+                小字=生效小字(),
+                小字字号=配置["subtitle_font_size"],
+                小字颜色=配置["subtitle_font_color"]
             )
+            头部点, 价格点 = 读取组件位置配置()
+            self.悬浮牌.更新组件位置(头部点, 价格点)
 
     def 退出(self):
         self.行情线程.停止()
