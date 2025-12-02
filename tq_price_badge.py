@@ -428,6 +428,10 @@ class 悬浮牌预览(QtWidgets.QFrame):
             f"color:{配置.get('badge_font_color', '#A6E22E')}; background: transparent;"
         )
 
+        # 让按钮、标签的鼠标事件交给父级处理，避免点击时切换选中样式，便于拖拽
+        for 部件 in (self.锁按钮, self.编辑按钮, self.小字标签, self.价格标签):
+            部件.installEventFilter(self)
+
         self._应用位置(读取组件位置配置())
 
     def _边界内(self, 位置: QtCore.QPoint, 部件: QtWidgets.QWidget) -> QtCore.QPoint:
@@ -474,43 +478,42 @@ class 悬浮牌预览(QtWidgets.QFrame):
     def 应用外部位置(self, 位置: dict[str, QtCore.QPoint]):
         self._应用位置(位置)
 
-    def mousePressEvent(self, 事件: QtGui.QMouseEvent):
-        点 = 事件.position().toPoint()
-        for 名称, 部件 in (
-            ("lock", self.锁按钮),
-            ("edit", self.编辑按钮),
-            ("subtitle", self.小字标签),
-            ("price", self.价格标签),
-        ):
-            if QtCore.QRect(部件.pos(), 部件.size()).contains(点):
-                self._拖拽目标 = 名称
-                self._拖拽偏移 = 点 - 部件.pos()
-                break
-        super().mousePressEvent(事件)
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.LeftButton:
+            映射 = {
+                self.小字标签: "subtitle",
+                self.锁按钮: "lock",
+                self.编辑按钮: "edit",
+                self.价格标签: "price",
+            }
+            if obj in 映射:
+                self._拖拽目标 = 映射[obj]
+                self._拖拽偏移 = event.position().toPoint()
+                return True
 
-    def mouseMoveEvent(self, 事件: QtGui.QMouseEvent):
-        if self._拖拽目标:
-            目标点 = 事件.position().toPoint() - self._拖拽偏移
+        if event.type() == QtCore.QEvent.MouseMove and self._拖拽目标:
+            当前点 = obj.mapToParent(event.position().toPoint()) - self._拖拽偏移
             if self._拖拽目标 == "subtitle":
-                安全点 = self._边界内(目标点, self.小字标签)
+                安全点 = self._边界内(当前点, self.小字标签)
                 self.小字标签.move(安全点)
             elif self._拖拽目标 == "lock":
-                安全点 = self._边界内(目标点, self.锁按钮)
+                安全点 = self._边界内(当前点, self.锁按钮)
                 self.锁按钮.move(安全点)
             elif self._拖拽目标 == "edit":
-                安全点 = self._边界内(目标点, self.编辑按钮)
+                安全点 = self._边界内(当前点, self.编辑按钮)
                 self.编辑按钮.move(安全点)
             elif self._拖拽目标 == "price":
-                安全点 = self._边界内(目标点, self.价格标签)
+                安全点 = self._边界内(当前点, self.价格标签)
                 self.价格标签.move(安全点)
             self.位置变更.emit(self.获取组件位置())
-        super().mouseMoveEvent(事件)
+            return True
 
-    def mouseReleaseEvent(self, 事件: QtGui.QMouseEvent):
-        if self._拖拽目标:
+        if event.type() == QtCore.QEvent.MouseButtonRelease and self._拖拽目标:
             self.位置变更.emit(self.获取组件位置())
-        self._拖拽目标 = None
-        super().mouseReleaseEvent(事件)
+            self._拖拽目标 = None
+            return True
+
+        return super().eventFilter(obj, event)
 
 
 class 设置对话框(QtWidgets.QDialog):
