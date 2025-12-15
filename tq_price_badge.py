@@ -213,12 +213,20 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         self.锁按钮.setCursor(QtCore.Qt.PointingHandCursor)
         self.锁按钮.setStyleSheet(self._按钮样式())
         self.锁按钮.clicked.connect(self.切换锁定)
+        self._锁按钮透明效果 = QtWidgets.QGraphicsOpacityEffect()
+        self._锁按钮透明效果.setOpacity(0.25)
+        self.锁按钮.setGraphicsEffect(self._锁按钮透明效果)
+        self.锁按钮.installEventFilter(self)
 
         self.编辑按钮 = QtWidgets.QToolButton(self)
         self.编辑按钮.setText("✏️")
         self.编辑按钮.setCursor(QtCore.Qt.PointingHandCursor)
         self.编辑按钮.setStyleSheet(self._按钮样式())
         self.编辑按钮.clicked.connect(self.设置请求)
+        self._编辑按钮透明效果 = QtWidgets.QGraphicsOpacityEffect()
+        self._编辑按钮透明效果.setOpacity(0.25)
+        self.编辑按钮.setGraphicsEffect(self._编辑按钮透明效果)
+        self.编辑按钮.installEventFilter(self)
 
         # 大号价格
         self.价格标签 = QtWidgets.QLabel(self)
@@ -286,6 +294,17 @@ class 悬浮牌窗口(QtWidgets.QWidget):
             self.价格标签.y() + self.价格标签.height()
         ) + 6
         self.setFixedSize(宽度, 高度)
+
+    def eventFilter(self, obj, event):
+        if obj in (self.锁按钮, self.编辑按钮):
+            透明效果 = obj.graphicsEffect()
+            if event.type() in (QtCore.QEvent.Enter, QtCore.QEvent.FocusIn):
+                if 透明效果:
+                    透明效果.setOpacity(1.0)
+            elif event.type() in (QtCore.QEvent.Leave, QtCore.QEvent.FocusOut):
+                if 透明效果:
+                    透明效果.setOpacity(0.25)
+        return super().eventFilter(obj, event)
 
     def _放到底部右侧(self):
         self.adjustSize()
