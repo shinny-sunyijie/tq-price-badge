@@ -181,14 +181,9 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         self._拖动起点 = QtCore.QPoint()
         self._窗口起点 = QtCore.QPoint()
 
-        self._对比色计时器 = QtCore.QTimer(self)
-        self._对比色计时器.setSingleShot(True)
-        self._对比色计时器.timeout.connect(self._更新对比色)
-
         self._初始化窗口标志()
         self._初始化界面()
         self._恢复或放到底部右侧()
-        self._延迟更新字体对比色()
 
     def _初始化窗口标志(self):
         标志 = (
@@ -300,70 +295,6 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         ) + 6
         self.setFixedSize(宽度, 高度)
 
-    def _延迟更新字体对比色(self, 延迟_ms: int = 180):
-        self._对比色计时器.start(延迟_ms)
-
-    def _更新对比色(self):
-        颜色 = self._选取对比色()
-        if 颜色 is None:
-            return
-
-        if 颜色 != 配置.get("badge_font_color"):
-            配置["badge_font_color"] = 颜色
-            保存配置()
-
-        self.应用样式(颜色=颜色)
-
-    def _选取对比色(self) -> str | None:
-        """采样悬浮牌附近的背景亮度，返回对比色。"""
-
-        窗口矩形 = self.frameGeometry()
-        屏幕 = QtGui.QGuiApplication.screenAt(窗口矩形.center())
-        if 屏幕 is None:
-            屏幕 = QtGui.QGuiApplication.primaryScreen()
-        if 屏幕 is None:
-            return None
-
-        采样边长 = 30
-        缓冲 = 10
-        候选 = [
-            QtCore.QRect(窗口矩形.left() - 缓冲 - 采样边长, 窗口矩形.top(), 采样边长, 采样边长),
-            QtCore.QRect(窗口矩形.right() + 缓冲, 窗口矩形.top(), 采样边长, 采样边长),
-            QtCore.QRect(窗口矩形.left(), 窗口矩形.top() - 缓冲 - 采样边长, 采样边长, 采样边长),
-            QtCore.QRect(窗口矩形.left(), 窗口矩形.bottom() + 缓冲, 采样边长, 采样边长),
-        ]
-
-        屏幕区域 = 屏幕.geometry()
-        亮度值: list[float] = []
-        for 区域 in 候选:
-            覆盖 = 区域.intersected(屏幕区域)
-            if 覆盖.isEmpty() or 覆盖.width() == 0 or 覆盖.height() == 0:
-                continue
-
-            抓图 = 屏幕.grabWindow(0, 覆盖.x(), 覆盖.y(), 覆盖.width(), 覆盖.height())
-            if 抓图.isNull():
-                continue
-
-            图像 = 抓图.toImage().convertToFormat(QtGui.QImage.Format_RGB32)
-            if 图像.isNull():
-                continue
-
-            总亮度 = 0.0
-            像素数 = 图像.width() * 图像.height()
-            for x in range(图像.width()):
-                for y in range(图像.height()):
-                    rgb = QtGui.QColor(图像.pixel(x, y))
-                    总亮度 += 0.2126 * rgb.red() + 0.7152 * rgb.green() + 0.0722 * rgb.blue()
-
-            if 像素数 > 0:
-                亮度值.append(总亮度 / (像素数 * 255.0))
-
-        if not 亮度值:
-            return None
-
-        平均亮度 = sum(亮度值) / len(亮度值)
-        return "#202124" if 平均亮度 >= 0.55 else "#b9b9b9"
-
     def eventFilter(self, obj, event):
         if obj in (self.锁按钮, self.编辑按钮):
             透明效果 = obj.graphicsEffect()
@@ -374,10 +305,6 @@ class 悬浮牌窗口(QtWidgets.QWidget):
                 if 透明效果:
                     透明效果.setOpacity(0.25)
         return super().eventFilter(obj, event)
-
-    def moveEvent(self, 事件: QtGui.QMoveEvent):
-        super().moveEvent(事件)
-        self._延迟更新字体对比色()
 
     def _放到底部右侧(self):
         self.adjustSize()
@@ -459,10 +386,6 @@ class 悬浮牌窗口(QtWidgets.QWidget):
         self._拖动中 = False
         super().mouseReleaseEvent(事件)
 
-    def showEvent(self, 事件: QtGui.QShowEvent):
-        super().showEvent(事件)
-        self._延迟更新字体对比色()
-
     def mouseDoubleClickEvent(self, 事件):
         if 事件.button() == QtCore.Qt.LeftButton:
             self.hide()
@@ -479,7 +402,6 @@ class 悬浮牌窗口(QtWidgets.QWidget):
 
         配置["badge_pos"] = {"x": int(self.x()), "y": int(self.y())}
         保存配置()
-        self._延迟更新字体对比色()
 
     def 更新组件位置(self, 位置: dict[str, QtCore.QPoint]):
         """从设置预览中同步内部组件的位置。"""
