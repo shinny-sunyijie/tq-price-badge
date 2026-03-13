@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # 透明悬浮牌 + 托盘 + TqApi
 import json
+import math
 import os
 import sys
 
@@ -13,7 +14,8 @@ TQ_PASS = os.environ.get("TQ_PASS")
 if not TQ_USER or not TQ_PASS:
     raise RuntimeError("请先在环境变量中设置 TQ_USER / TQ_PASS")
 # ======= 基本配置=========
-合约代码 = sys.argv[1] if len(sys.argv) > 1 else "SHFE.cu2401"
+# 兼容新版本 TqSdk: 默认使用主连合约，避免历史到期合约长时间无最新价
+合约代码 = sys.argv[1] if len(sys.argv) > 1 else "KQ.m@SHFE.cu"
 标题前缀 = "期货最新价"
 当价格为空也更新 = True  # 对应 UPDATE_WHEN_NONE
 
@@ -78,6 +80,20 @@ def 格式化价格(p):
         except Exception:
             return s[:6]
     return s
+
+
+def 读取最新价(quote):
+    """兼容不同版本/对象形态的 quote 读取方式。"""
+
+    价格 = None
+    try:
+        价格 = quote["last_price"]
+    except Exception:
+        价格 = getattr(quote, "last_price", None)
+
+    if isinstance(价格, float) and math.isnan(价格):
+        return None
+    return 价格
 
 
 def _点_from_config(记录: dict | None, 默认点: QtCore.QPoint) -> QtCore.QPoint:
@@ -151,11 +167,20 @@ class 行情线程(QtCore.QThread):
             api = TqApi(auth=TqAuth(self.用户, self.密码))
             quote = api.get_quote(self.合约)
             上次文本 = None
+            连续无价格次数 = 0
             while not self._停止:
                 api.wait_update()
-                价格 = quote["last_price"]
+                价格 = 读取最新价(quote)
                 if 价格 is None and not 当价格为空也更新:
                     continue
+                if 价格 is None:
+                    连续无价格次数 += 1
+                    if 连续无价格次数 == 200:
+                        self.错误信号.emit(
+                            f"合约 {self.合约} 暂无最新价，请确认合约是否可交易（建议使用主连如 KQ.m@SHFE.cu）"
+                        )
+                else:
+                    连续无价格次数 = 0
                 文本 = 格式化价格(价格)
                 if 文本 != 上次文本:
                     上次文本 = 文本
