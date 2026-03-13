@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 import sys
 
 from PySide6 import QtWidgets, QtGui, QtCore
@@ -33,7 +34,8 @@ if not TQ_USER or not TQ_PASS:
     "badge_edit_pos": None,         # 编辑按钮位置
     "badge_price_pos": None,        # 价格组件位置
     "badge_pos": None,              # 悬浮牌位置（持久化存储）
-    "settings_pos": None            # 设置窗口位置（持久化存储）
+    "settings_pos": None,           # 设置窗口位置（持久化存储）
+    "recent_symbols": []            # 最近切换过的合约（用于补全）
 }
 配置 = 默认配置.copy()
 显示大号价格默认 = True
@@ -65,6 +67,26 @@ def 保存配置():
 def 生效小字():
     文本 = (配置.get("badge_subtitle") or "").strip()
     return 文本 if 文本 else 合约代码
+
+
+合约代码正则 = re.compile(r"^(?:KQ\.(?:m|i)@[A-Z]+\.[A-Z0-9]+|[A-Z]+\.[A-Z0-9]+)$")
+
+
+def 规范化合约代码(原始: str) -> str:
+    return (原始 or "").strip().upper()
+
+
+def 合约代码合法(代码: str) -> bool:
+    return bool(合约代码正则.fullmatch(代码))
+
+
+def 写入最近合约(代码: str):
+    代码 = 规范化合约代码(代码)
+    if not 代码:
+        return
+    历史 = [规范化合约代码(x) for x in 配置.get("recent_symbols", []) if str(x).strip()]
+    新历史 = [代码] + [x for x in 历史 if x != 代码]
+    配置["recent_symbols"] = 新历史[:30]
 
 
 def 格式化价格(p):
@@ -561,11 +583,14 @@ class 悬浮牌预览(QtWidgets.QFrame):
 
 
 class 设置对话框(QtWidgets.QDialog):
-    def __init__(self, 父=None):
+    合约切换请求 = QtCore.Signal(str)
+
+    def __init__(self, 当前合约: str, 父=None):
         super().__init__(父)
+        self.当前合约 = 当前合约
         self.setWindowTitle("设置 - 悬浮牌样式")
         self.setModal(True)
-        self.setFixedSize(520, 520)
+        self.setFixedSize(520, 560)
         self._预览组件位置 = 读取组件位置配置()
         self._初始化界面()
         self._恢复位置()
@@ -608,6 +633,24 @@ class 设置对话框(QtWidgets.QDialog):
         布局.addWidget(self.备注颜色按钮, 行, 1, QtCore.Qt.AlignLeft)
         行 += 1
 
+        # 合约切换
+        布局.addWidget(QtWidgets.QLabel("订阅合约："), 行, 0, QtCore.Qt.AlignRight)
+        self.合约输入 = QtWidgets.QLineEdit(self.当前合约, self)
+        self.合约输入.setPlaceholderText("示例：KQ.m@SHFE.cu / SHFE.rb2501")
+        self.合约输入.editingFinished.connect(self._规范化合约输入)
+        self.合约补全模型 = QtCore.QStringListModel(self)
+        self.合约补全 = QtWidgets.QCompleter(self.合约补全模型, self)
+        self.合约补全.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self.合约补全.setFilterMode(QtCore.Qt.MatchContains)
+        self.合约补全.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
+        self.合约输入.setCompleter(self.合约补全)
+        self._刷新合约补全()
+        布局.addWidget(self.合约输入, 行, 1, QtCore.Qt.AlignLeft)
+        self.切换合约按钮 = QtWidgets.QPushButton("切换", self)
+        self.切换合约按钮.clicked.connect(self._切换合约)
+        布局.addWidget(self.切换合约按钮, 行, 2, QtCore.Qt.AlignLeft)
+        行 += 1
+
         # 小字
         布局.addWidget(QtWidgets.QLabel("价格上方小字："), 行, 0, QtCore.Qt.AlignRight)
         self.小字输入 = QtWidgets.QLineEdit(
@@ -643,6 +686,46 @@ class 设置对话框(QtWidgets.QDialog):
         布局.addLayout(按钮框, 行, 0, 1, 3)
 
         self._预览()
+
+    def _候选合约列表(self) -> list[str]:
+        候选 = [
+            self.当前合约,
+            "KQ.m@SHFE.cu",
+            "KQ.m@SHFE.rb",
+            "KQ.m@DCE.i",
+            "KQ.m@CZCE.SR",
+            "KQ.m@CFFEX.IF",
+        ]
+        候选.extend(配置.get("recent_symbols", []))
+        结果 = []
+        for 项 in 候选:
+            代码 = 规范化合约代码(str(项))
+            if 代码 and 代码 not in 结果:
+                结果.append(代码)
+        return 结果
+
+    def _刷新合约补全(self):
+        self.合约补全模型.setStringList(self._候选合约列表())
+
+    def _规范化合约输入(self):
+        self.合约输入.setText(规范化合约代码(self.合约输入.text()))
+
+    def _切换合约(self):
+        代码 = 规范化合约代码(self.合约输入.text())
+        self.合约输入.setText(代码)
+        if not 合约代码合法(代码):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "合约代码无效",
+                "请输入天勤可识别的代码，例如：\n"
+                "- KQ.m@SHFE.cu（主连）\n"
+                "- SHFE.rb2501（具体合约）"
+            )
+            return
+        self.合约切换请求.emit(代码)
+        QtWidgets.QMessageBox.information(self, "已切换", f"已切换到合约：{代码}")
+        self.当前合约 = 代码
+        self._刷新合约补全()
 
     def _选择颜色(self, 用于备注=False):
         按钮 = self.备注颜色按钮 if 用于备注 else self.颜色按钮
@@ -746,16 +829,17 @@ class 主控制(QtCore.QObject):
     def __init__(self, 应用: QtWidgets.QApplication):
         super().__init__()
         self.应用 = 应用
+        self.当前合约 = 规范化合约代码(合约代码)
+        写入最近合约(self.当前合约)
+        保存配置()
         self.悬浮牌 = 悬浮牌窗口()
         # 悬浮牌上的“编辑”按钮打开同一份设置对话框
         self.悬浮牌.设置请求.connect(self.打开设置)
         if 显示大号价格默认:
             self.悬浮牌.show()
 
-        self.行情线程 = 行情线程(合约代码, TQ_USER, TQ_PASS)
-        self.行情线程.价格信号.connect(self.处理价格更新)
-        self.行情线程.错误信号.connect(self.处理错误)
-        self.行情线程.start()
+        self.行情线程 = None
+        self._启动行情线程(self.当前合约)
 
         self._创建托盘()
 
@@ -781,7 +865,7 @@ class 主控制(QtCore.QObject):
         self.退出动作.triggered.connect(self.退出)
 
         self.托盘.setContextMenu(菜单)
-        self.托盘.setToolTip(f"{合约代码} {标题前缀}: …")
+        self.托盘.setToolTip(f"{self.当前合约} {标题前缀}: …")
         self.托盘.show()
 
     # ==== 托盘动作 ====
@@ -800,7 +884,8 @@ class 主控制(QtCore.QObject):
         )
 
     def 打开设置(self):
-        对话 = 设置对话框(self.悬浮牌)
+        对话 = 设置对话框(self.当前合约, self.悬浮牌)
+        对话.合约切换请求.connect(self.切换合约订阅)
         if 对话.exec() == QtWidgets.QDialog.Accepted:
             # 应用到悬浮牌
             self.悬浮牌.应用样式(
@@ -813,19 +898,43 @@ class 主控制(QtCore.QObject):
             位置 = 读取组件位置配置()
             self.悬浮牌.更新组件位置(位置)
 
+    def _启动行情线程(self, 代码: str):
+        self.行情线程 = 行情线程(代码, TQ_USER, TQ_PASS)
+        self.行情线程.价格信号.connect(self.处理价格更新)
+        self.行情线程.错误信号.connect(self.处理错误)
+        self.行情线程.start()
+
+    def 切换合约订阅(self, 新合约: str):
+        global 合约代码
+        新合约 = 规范化合约代码(新合约)
+        if not 新合约 or 新合约 == self.当前合约:
+            return
+        旧线程 = self.行情线程
+        self.当前合约 = 新合约
+        合约代码 = 新合约
+        写入最近合约(新合约)
+        保存配置()
+        if 旧线程 is not None:
+            旧线程.停止()
+            旧线程.wait(1500)
+        self._启动行情线程(self.当前合约)
+        self.悬浮牌.应用样式(小字=生效小字())
+        self.托盘.setToolTip(f"{self.当前合约} {标题前缀}: …")
+
     def 退出(self):
-        self.行情线程.停止()
-        self.行情线程.wait(2000)
+        if self.行情线程 is not None:
+            self.行情线程.停止()
+            self.行情线程.wait(2000)
         self.托盘.hide()
         self.应用.quit()
 
     # ==== 行情回调 ====
     def 处理价格更新(self, 文本):
         self.悬浮牌.更新价格文本(文本)
-        self.托盘.setToolTip(f"{合约代码} {标题前缀}: {文本}")
+        self.托盘.setToolTip(f"{self.当前合约} {标题前缀}: {文本}")
 
     def 处理错误(self, 信息):
-        self.托盘.setToolTip(f"{合约代码} 出错: {信息}")
+        self.托盘.setToolTip(f"{self.当前合约} 出错: {信息}")
         # 可以视情况弹个提示框：
         # QtWidgets.QMessageBox.warning(None, "运行出错", 信息)
 
