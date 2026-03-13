@@ -90,33 +90,57 @@ def 写入最近合约(代码: str):
     配置["recent_symbols"] = 新历史[:30]
 
 
-def 格式化价格(p):
-    if p is None:
+def _读取quote字段(quote, 字段名: str):
+    try:
+        return quote[字段名]
+    except Exception:
+        return getattr(quote, 字段名, None)
+
+
+def _转为有限数字(值):
+    if 值 is None:
+        return None
+    try:
+        数值 = float(值)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(数值):
+        return None
+    return 数值
+
+
+def 格式化价格(p, 小数位: int | None = None):
+    """按合约精度显示真实价格，避免截断成错误行情。"""
+
+    价格 = _转为有限数字(p)
+    if 价格 is None:
         return "—"
-    s = f"{p:.2f}".rstrip("0").rstrip(".")
-    if len(s) > 6:
-        try:
-            s_int = str(int(round(p)))
-            if len(s_int) <= 6:
-                return s_int
-            return s[:6]
-        except Exception:
-            return s[:6]
-    return s
+
+    try:
+        小数位 = None if 小数位 is None else max(0, int(小数位))
+    except (TypeError, ValueError, OverflowError):
+        小数位 = None
+
+    if 小数位 is not None:
+        return f"{价格:.{小数位}f}"
+    if 价格.is_integer():
+        return str(int(价格))
+    return f"{价格:.10f}".rstrip("0").rstrip(".")
 
 
 def 读取最新价(quote):
     """兼容不同版本/对象形态的 quote 读取方式。"""
 
-    价格 = None
-    try:
-        价格 = quote["last_price"]
-    except Exception:
-        价格 = getattr(quote, "last_price", None)
+    return _转为有限数字(_读取quote字段(quote, "last_price"))
 
-    if isinstance(价格, float) and math.isnan(价格):
+
+def 读取价格小数位(quote) -> int | None:
+    小数位 = _读取quote字段(quote, "price_decs")
+    try:
+        小数位 = int(小数位)
+    except (TypeError, ValueError, OverflowError):
         return None
-    return 价格
+    return max(0, 小数位)
 
 
 def _点_from_config(记录: dict | None, 默认点: QtCore.QPoint) -> QtCore.QPoint:
@@ -194,6 +218,7 @@ class 行情线程(QtCore.QThread):
             while not self._停止:
                 api.wait_update()
                 价格 = 读取最新价(quote)
+                小数位 = 读取价格小数位(quote)
                 if 价格 is None and not 当价格为空也更新:
                     continue
                 if 价格 is None:
@@ -204,7 +229,7 @@ class 行情线程(QtCore.QThread):
                         )
                 else:
                     连续无价格次数 = 0
-                文本 = 格式化价格(价格)
+                文本 = 格式化价格(价格, 小数位)
                 if 文本 != 上次文本:
                     上次文本 = 文本
                     self.价格信号.emit(文本)
