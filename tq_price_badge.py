@@ -5,6 +5,7 @@ import math
 import os
 import re
 import sys
+import time
 
 from PySide6 import QtWidgets, QtGui, QtCore
 from tqsdk import TqApi, TqAuth
@@ -207,6 +208,56 @@ class 行情线程(QtCore.QThread):
                 if 文本 != 上次文本:
                     上次文本 = 文本
                     self.价格信号.emit(文本)
+        except Exception as e:
+            self.错误信号.emit(str(e))
+        finally:
+            if api is not None:
+                try:
+                    api.close()
+                except Exception:
+                    pass
+
+
+class 在市期货合约加载线程(QtCore.QThread):
+    完成信号 = QtCore.Signal(list)
+    错误信号 = QtCore.Signal(str)
+
+    def __init__(self, 用户: str, 密码: str, 父=None):
+        super().__init__(父)
+        self.用户 = 用户
+        self.密码 = 密码
+
+    def run(self):
+        api = None
+        try:
+            api = TqApi(auth=TqAuth(self.用户, self.密码))
+            合约列表 = list(api.query_quotes(ins_class="FUTURE", expired=False))
+            if not 合约列表:
+                self.完成信号.emit([])
+                return
+
+            quote列表 = api.get_quote_list(合约列表)
+            for _ in range(3):
+                if self.isInterruptionRequested():
+                    return
+                api.wait_update(deadline=time.time() + 1)
+
+            def _成交量(q) -> float:
+                try:
+                    值 = q["volume"]
+                except Exception:
+                    值 = getattr(q, "volume", None)
+                if 值 is None:
+                    return -1.0
+                try:
+                    值 = float(值)
+                except Exception:
+                    return -1.0
+                return -1.0 if math.isnan(值) else 值
+
+            带成交量 = [(代码, _成交量(quote)) for 代码, quote in zip(合约列表, quote列表)]
+            带成交量.sort(key=lambda x: x[1], reverse=True)
+            self.完成信号.emit([代码 for 代码, _ in 带成交量])
         except Exception as e:
             self.错误信号.emit(str(e))
         finally:
@@ -592,6 +643,8 @@ class 设置对话框(QtWidgets.QDialog):
         self.setModal(True)
         self.setFixedSize(520, 560)
         self._预览组件位置 = 读取组件位置配置()
+        self._在市期货合约: list[str] = []
+        self._合约加载线程 = None
         self._初始化界面()
         self._恢复位置()
 
@@ -636,7 +689,7 @@ class 设置对话框(QtWidgets.QDialog):
         # 合约切换
         布局.addWidget(QtWidgets.QLabel("订阅合约："), 行, 0, QtCore.Qt.AlignRight)
         self.合约输入 = QtWidgets.QLineEdit(self.当前合约, self)
-        self.合约输入.setPlaceholderText("示例：KQ.m@SHFE.cu / SHFE.rb2501")
+        self.合约输入.setPlaceholderText("输入关键字模糊搜索在市期货合约（示例：SHFE.rb2501）")
         self.合约输入.editingFinished.connect(self._规范化合约输入)
         self.合约补全模型 = QtCore.QStringListModel(self)
         self.合约补全 = QtWidgets.QCompleter(self.合约补全模型, self)
@@ -645,6 +698,7 @@ class 设置对话框(QtWidgets.QDialog):
         self.合约补全.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
         self.合约输入.setCompleter(self.合约补全)
         self._刷新合约补全()
+        self._加载在市期货合约()
         布局.addWidget(self.合约输入, 行, 1, QtCore.Qt.AlignLeft)
         self.切换合约按钮 = QtWidgets.QPushButton("切换", self)
         self.切换合约按钮.clicked.connect(self._切换合约)
@@ -688,14 +742,8 @@ class 设置对话框(QtWidgets.QDialog):
         self._预览()
 
     def _候选合约列表(self) -> list[str]:
-        候选 = [
-            self.当前合约,
-            "KQ.m@SHFE.cu",
-            "KQ.m@SHFE.rb",
-            "KQ.m@DCE.i",
-            "KQ.m@CZCE.SR",
-            "KQ.m@CFFEX.IF",
-        ]
+        候选 = [self.当前合约]
+        候选.extend(self._在市期货合约)
         候选.extend(配置.get("recent_symbols", []))
         结果 = []
         for 项 in 候选:
@@ -706,6 +754,23 @@ class 设置对话框(QtWidgets.QDialog):
 
     def _刷新合约补全(self):
         self.合约补全模型.setStringList(self._候选合约列表())
+
+    def _加载在市期货合约(self):
+        self._合约加载线程 = 在市期货合约加载线程(TQ_USER, TQ_PASS, self)
+        self._合约加载线程.完成信号.connect(self._应用在市期货合约)
+        self._合约加载线程.错误信号.connect(self._处理合约加载失败)
+        self._合约加载线程.finished.connect(self._合约加载结束)
+        self._合约加载线程.start()
+
+    def _应用在市期货合约(self, 合约列表: list[str]):
+        self._在市期货合约 = [规范化合约代码(x) for x in 合约列表 if str(x).strip()]
+        self._刷新合约补全()
+
+    def _处理合约加载失败(self, 错误信息: str):
+        print("加载在市期货合约失败:", 错误信息)
+
+    def _合约加载结束(self):
+        self._合约加载线程 = None
 
     def _规范化合约输入(self):
         self.合约输入.setText(规范化合约代码(self.合约输入.text()))
@@ -820,7 +885,14 @@ class 设置对话框(QtWidgets.QDialog):
         配置["settings_pos"] = {"x": int(self.x()), "y": int(self.y())}
         保存配置()
 
+    def _停止合约加载线程(self):
+        线程 = self._合约加载线程
+        if 线程 and 线程.isRunning():
+            线程.requestInterruption()
+            线程.wait(1200)
+
     def closeEvent(self, 事件: QtGui.QCloseEvent):
+        self._停止合约加载线程()
         self._保存位置()
         super().closeEvent(事件)
 
