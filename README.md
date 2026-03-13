@@ -9,5 +9,5 @@
 项目基于天勤量化行情，登录信息需写在系统环境变量中
 ```chatinput
 pip install -r requirements.txt
-python tq_price_badge.py CZCE.PX601
+python tq_price_badge.py KQ.m@SHFE.cu
 ```
