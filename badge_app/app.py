@@ -112,5 +112,6 @@ class 主控制(QtCore.QObject):
 def main():
     state.读取配置()
     app = QtWidgets.QApplication(sys.argv)
-    主控制(app)
+    app.setQuitOnLastWindowClosed(False)
+    控制 = 主控制(app)
     sys.exit(app.exec())
