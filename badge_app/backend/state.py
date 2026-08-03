@@ -10,6 +10,12 @@ TQ_PASS = os.environ.get("TQ_PASS")
 if not TQ_USER or not TQ_PASS:
     raise RuntimeError("请先在环境变量中设置 TQ_USER / TQ_PASS")
 
+# 实盘账户凭据只从环境变量读取，绝不写入本地样式配置文件。
+# 行情悬浮牌仍可在未配置实盘账户时独立运行；只有开启账户监控后才校验这些值。
+TQ_BROKER_ID = os.environ.get("TQ_BROKER_ID")
+TQ_ACCOUNT_ID = os.environ.get("TQ_ACCOUNT_ID")
+TQ_ACCOUNT_PASS = os.environ.get("TQ_ACCOUNT_PASS")
+
 # 兼容新版本 TqSdk: 默认使用主连合约，避免历史到期合约长时间无最新价
 合约代码 = sys.argv[1] if len(sys.argv) > 1 else "KQ.m@SHFE.cu"
 标题前缀 = "期货最新价"
@@ -30,6 +36,22 @@ if not TQ_USER or not TQ_PASS:
     "badge_pos": None,
     "settings_pos": None,
     "recent_symbols": [],
+    # 自定义的大号行情允许关闭；开启时固定只有当前这一条合约。
+    "custom_quote_enabled": True,
+    "monitor_position_quotes": False,
+    "monitor_order_quotes": False,
+    # 账户监控的三类文字可独立调整。整体面板位置相对悬浮牌；三个模块
+    # 的位置相对账户面板。None 表示使用界面的自动排列，兼容旧配置。
+    "account_status_font_size": 9,
+    # 以下两个自动行情配置仅用于读取并保留旧配置文件，不再由设置界面暴露。
+    "account_quote_font_size": 9,
+    "account_position_font_size": 9,
+    "account_order_font_size": 9,
+    "account_panel_pos": None,
+    "account_status_pos": None,
+    "account_quote_pos": None,
+    "account_position_pos": None,
+    "account_order_pos": None,
 }
 配置 = 默认配置.copy()
 显示大号价格默认 = True
@@ -55,6 +77,30 @@ def 保存配置():
             json.dump(配置, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("保存配置失败:", e)
+
+
+def 读取实盘账户凭据() -> dict[str, str]:
+    """返回实盘登录参数；密码只存在于进程内存，不进入持久化配置。"""
+
+    return {
+        "broker_id": (TQ_BROKER_ID or "").strip(),
+        "account_id": (TQ_ACCOUNT_ID or "").strip(),
+        "account_password": TQ_ACCOUNT_PASS or "",
+        "auth_user": TQ_USER or "",
+        "auth_password": TQ_PASS or "",
+    }
+
+
+def 实盘账户凭据缺失项() -> list[str]:
+    凭据 = 读取实盘账户凭据()
+    映射 = {
+        "broker_id": "TQ_BROKER_ID",
+        "account_id": "TQ_ACCOUNT_ID",
+        "account_password": "TQ_ACCOUNT_PASS",
+        "auth_user": "TQ_USER",
+        "auth_password": "TQ_PASS",
+    }
+    return [环境变量名 for 键, 环境变量名 in 映射.items() if not 凭据[键]]
 
 
 def 设置当前合约(代码: str):
@@ -91,6 +137,32 @@ def 读取组件位置配置() -> dict[str, QtCore.QPoint]:
         "lock": _点_from_config(配置.get("badge_lock_pos"), 锁定默认),
         "edit": _点_from_config(配置.get("badge_edit_pos"), 编辑默认),
         "price": _点_from_config(配置.get("badge_price_pos"), 价格默认),
+    }
+
+
+def _可选点_from_config(记录) -> QtCore.QPoint | None:
+    """将可选位置配置转为 QPoint；缺失或损坏的旧记录回退到自动排列。"""
+
+    if not isinstance(记录, dict) or "x" not in 记录 or "y" not in 记录:
+        return None
+    try:
+        return QtCore.QPoint(int(记录["x"]), int(记录["y"]))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def 读取账户组件位置配置() -> dict[str, QtCore.QPoint | None]:
+    """读取整体账户区及其三个可见内容模块的可选相对坐标。
+
+    panel 相对悬浮牌窗口；其它坐标相对 panel。返回 None 的项目应由界面自动
+    排列。旧版自动行情坐标仍可保留在配置文件中，但不再作为可见模块暴露。
+    """
+
+    return {
+        "panel": _可选点_from_config(配置.get("account_panel_pos")),
+        "status": _可选点_from_config(配置.get("account_status_pos")),
+        "order": _可选点_from_config(配置.get("account_order_pos")),
+        "position": _可选点_from_config(配置.get("account_position_pos")),
     }
 
 
